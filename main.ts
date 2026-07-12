@@ -11,8 +11,18 @@ import {
 
 type AnyFunction = (...args: unknown[]) => unknown;
 
+// Empirically-tuned delays — see call sites for why each is needed.
+const ACTIVATE_AFTER_OPEN_FILE_DELAY_MS = 10;
+const SCROLL_TO_ANCHOR_DELAY_MS = 20;
+
 export default class NoDuplicatePlugin extends Plugin {
     async onload() {
+        // Both hooks below monkeypatch shared prototypes (Workspace.prototype,
+        // WorkspaceLeaf.prototype) rather than per-instance methods, since Obsidian
+        // exposes no event/hook for "about to open a file". If another installed
+        // plugin patches the same two methods, behavior depends on patch order —
+        // there's no way around this short of Obsidian adding a real interception API.
+
         // 1. Intercept openLinkText (opened via link click)
         this.register(
             around(Workspace.prototype, {
@@ -84,14 +94,18 @@ export default class NoDuplicatePlugin extends Plugin {
 
 function activateLeafByPath(app: App, path: string, linktext: string | null = null, ignoreLeaf: WorkspaceLeaf | null = null, delay: boolean = false, openState?: OpenViewState): boolean {
     let foundLeaf: WorkspaceLeaf | null = null;
+    const staleGhostLeaves: WorkspaceLeaf[] = [];
 
     app.workspace.iterateAllLeaves((leaf) => {
-        // Self-heal: sweep up any hidden empty leaves left behind by a prior
-        // interception whose detach didn't stick (see openFile hook above).
+        // Self-heal: find hidden empty leaves left behind by a prior interception
+        // whose detach didn't stick (see openFile hook above). Detaching is deferred
+        // until after this loop finishes — iterateAllLeaves walks the live split/tab
+        // tree, and detaching mid-walk would splice a sibling out from under it,
+        // risking a skipped leaf in the same tab group.
         // @ts-ignore: containerEl isn't part of the public API
         const leafContainerEl = leaf.containerEl as HTMLElement | undefined;
         if (leaf.getViewState().type === "empty" && leafContainerEl?.hasClass('unique-tab-hidden')) {
-            leaf.detach();
+            staleGhostLeaves.push(leaf);
             return;
         }
 
@@ -116,6 +130,8 @@ function activateLeafByPath(app: App, path: string, linktext: string | null = nu
         if (isMatch) foundLeaf = leaf;
     });
 
+    for (const ghost of staleGhostLeaves) ghost.detach();
+
     if (foundLeaf) {
         const leaf = foundLeaf;
         const activate = () => {
@@ -126,9 +142,11 @@ function activateLeafByPath(app: App, path: string, linktext: string | null = nu
             if (openState?.eState) leaf.setEphemeralState(openState.eState);
         };
 
-        // Delay to work around focus getting stolen back
+        // The openFile hook runs before Obsidian finishes its own focus handling for
+        // the leaf it just created, which can re-steal focus right after we call
+        // setActiveLeaf synchronously. Deferring past that lets our activation win.
         if (delay) {
-            window.setTimeout(activate, 10);
+            window.setTimeout(activate, ACTIVATE_AFTER_OPEN_FILE_DELAY_MS);
         } else {
             activate();
         }
@@ -139,7 +157,9 @@ function activateLeafByPath(app: App, path: string, linktext: string | null = nu
              const viewState = leaf.getViewState();
              // Canvas/base views generally don't support this kind of scroll anchor
              if (viewState.type === "markdown") {
-                 window.setTimeout(() => scrollToElement(app, linktext, leaf), 20);
+                 // Give the markdown view/editor a tick to finish mounting before we
+                 // set the cursor and scroll, otherwise the scroll can silently no-op.
+                 window.setTimeout(() => scrollToElement(app, linktext, leaf), SCROLL_TO_ANCHOR_DELAY_MS);
              }
         }
         return true;
@@ -178,16 +198,19 @@ function scrollToElement(app: App, linktext: string, leaf: WorkspaceLeaf) {
     }
 }
 
-// Monkey-patching helper.
+// Monkey-patching helper. `obj` is typically a class prototype (Workspace.prototype,
+// WorkspaceLeaf.prototype, ...), which has no index signature — hence the cast below
+// instead of typing the parameter as Record<string, unknown>, which `tsc` rejects.
 // Returns a cleanup function for this.register(), so hooks unwind cleanly on unload.
-function around(obj: Record<string, unknown>, factories: Record<string, (original: AnyFunction) => AnyFunction>): () => void {
+function around(obj: object, factories: Record<string, (original: AnyFunction) => AnyFunction>): () => void {
+    const target = obj as Record<string, AnyFunction>;
     const removers = Object.keys(factories).map((key) => {
-        const prev = obj[key] as AnyFunction;
+        const prev = target[key];
         const next = factories[key](prev);
         const original = prev;
-        obj[key] = next;
+        target[key] = next;
         return () => {
-            if (obj[key] === next) obj[key] = original;
+            if (target[key] === next) target[key] = original;
         };
     });
     // this.register() expects a plain function

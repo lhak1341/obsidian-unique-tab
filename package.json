@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "esbuild main.ts --bundle --minify --external:obsidian --external:electron --external:@codemirror/state --external:@codemirror/view --outfile=main.js --format=cjs --platform=node",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "deploy": "bun run build && mkdir -p \"/Users/lhak/Library/Mobile Documents/iCloud~md~obsidian/Documents/lhakZettel/.obsidian/plugins/unique-tab\" && cp main.js manifest.json styles.css \"/Users/lhak/Library/Mobile Documents/iCloud~md~obsidian/Documents/lhakZettel/.obsidian/plugins/unique-tab/\""

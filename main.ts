@@ -13,9 +13,7 @@ type AnyFunction = (...args: unknown[]) => unknown;
 
 export default class NoDuplicatePlugin extends Plugin {
     async onload() {
-        console.log("No Duplicate Leaves (Optimized for ALL file types) loaded");
-
-        // 1. 拦截 openLinkText (通过链接点击打开)
+        // 1. Intercept openLinkText (opened via link click)
         this.register(
             around(Workspace.prototype, {
                 openLinkText: (next: AnyFunction) => {
@@ -29,7 +27,7 @@ export default class NoDuplicatePlugin extends Plugin {
                         );
 
                         if (targetFile) {
-                            if (activateLeafByPath(app, targetFile.path, linktext)) return;
+                            if (activateLeafByPath(app, targetFile.path, linktext, null, false, openViewState)) return;
                         }
                         return next.call(this, linktext, sourcePath, newLeaf, openViewState) as Promise<void>;
                     };
@@ -37,32 +35,37 @@ export default class NoDuplicatePlugin extends Plugin {
             })
         );
 
-        // 2. 拦截 openFile (通过文件树或快速切换打开)
+        // 2. Intercept openFile (opened via file explorer or quick switcher)
         this.register(
             around(WorkspaceLeaf.prototype, {
                 openFile: (next: AnyFunction) => {
                     const app = this.app;
                     return function (this: WorkspaceLeaf, file: TFile, openState?: OpenViewState) {
-                        // 尝试跳转到旧标签页
-                        const leafFound = activateLeafByPath(app, file.path, null, this, true);
-                        
+                        // Try to jump to an existing tab with this file open
+                        const leafFound = activateLeafByPath(app, file.path, null, this, true, openState);
+
                         if (leafFound) {
-                            // 检查当前 leaf 是否是新创建的空 leaf
-                            // @ts-ignore: file 属性在不同 View 上的强类型可能不存在
+                            // Check whether the current leaf is a newly created empty leaf
+                            // @ts-ignore: `file` isn't strongly typed on all View subclasses
                             const isNewEmptyLeaf = this.view && !this.view.file && this.view.getViewType() === "empty";
-                            
+
                             if (isNewEmptyLeaf) {
-                                // 【极速隐身】使用 CSS 类而非内联样式
-                                // @ts-ignore: containerEl 属于未完全暴露的 DOM API
+                                // Hide via CSS class instead of inline style
+                                // @ts-ignore: containerEl isn't part of the public API
                                 const containerEl = this.containerEl as HTMLElement;
                                 if (containerEl) {
                                     containerEl.addClass('unique-tab-hidden');
                                 }
-                                
-                                // 立即销毁
-                                window.setTimeout(() => {
-                                    this.detach(); 
-                                }, 0);
+
+                                // Detach synchronously. A deferred `setTimeout` detach can be
+                                // dropped (e.g. if Obsidian reuses this leaf via workspace.getLeaf()
+                                // before the callback runs), leaving a permanent hidden "empty" leaf
+                                // that later hijacks other plugins' getLeaf(false) calls.
+                                try {
+                                    this.detach();
+                                } catch {
+                                    // already being torn down elsewhere; ignore
+                                }
                             }
 
                             return Promise.resolve(); 
@@ -75,25 +78,37 @@ export default class NoDuplicatePlugin extends Plugin {
         );
     }
 
-    onunload() {
-        console.log("No Duplicate Leaves unloaded");
-    }
 }
 
-// --- 辅助函数 ---
+// --- Helpers ---
 
-function activateLeafByPath(app: App, path: string, linktext: string | null = null, ignoreLeaf: WorkspaceLeaf | null = null, delay: boolean = false): boolean {
+function activateLeafByPath(app: App, path: string, linktext: string | null = null, ignoreLeaf: WorkspaceLeaf | null = null, delay: boolean = false, openState?: OpenViewState): boolean {
     let foundLeaf: WorkspaceLeaf | null = null;
-    
+
     app.workspace.iterateAllLeaves((leaf) => {
+        // Self-heal: sweep up any hidden empty leaves left behind by a prior
+        // interception whose detach didn't stick (see openFile hook above).
+        // @ts-ignore: containerEl isn't part of the public API
+        const leafContainerEl = leaf.containerEl as HTMLElement | undefined;
+        if (leaf.getViewState().type === "empty" && leafContainerEl?.hasClass('unique-tab-hidden')) {
+            leaf.detach();
+            return;
+        }
+
         if (foundLeaf) return;
         if (ignoreLeaf && leaf === ignoreLeaf) return;
 
+        // Only match real content tabs in the main editor area. Sidebar panels
+        // (file-properties, localgraph, backlinks, outline, ...) mirror whatever
+        // file is contextually active in their `state.file` too, but they aren't
+        // "this file open in a tab" — jumping to them leaves the main area untouched.
+        if (leaf.getRoot() !== app.workspace.rootSplit) return;
+
         const viewState = leaf.getViewState();
-        
-        // 额外校验 file 必须是非空字符串，防止 undefined/空值误匹配
+
+        // Guard against undefined/empty values matching by accident
         const leafFile = viewState.state?.file;
-        const isMatch = 
+        const isMatch =
             typeof leafFile === 'string' &&
             leafFile.length > 0 &&
             leafFile === path;
@@ -103,19 +118,26 @@ function activateLeafByPath(app: App, path: string, linktext: string | null = nu
 
     if (foundLeaf) {
         const leaf = foundLeaf;
-        // 延迟解决焦点抢占
-        if (delay) {
-            window.setTimeout(() => {
-                app.workspace.setActiveLeaf(leaf, { focus: true });
-            }, 10);
-        } else {
+        const activate = () => {
             app.workspace.setActiveLeaf(leaf, { focus: true });
+            // Caller passed a specific open state (e.g. a line/anchor requested by the
+            // dashboard) — apply it to the existing leaf, otherwise we just jump to the
+            // old tab without actually opening what the caller asked for
+            if (openState?.eState) leaf.setEphemeralState(openState.eState);
+        };
+
+        // Delay to work around focus getting stolen back
+        if (delay) {
+            window.setTimeout(activate, 10);
+        } else {
+            activate();
         }
 
-        // 如果是通过链接点过来的（带有 # 标题定位），且目标是普通笔记，才执行滚动跳转
+        // Only scroll to the anchor if we came from a link click (has a # heading target)
+        // and the target is a regular note
         if (linktext) {
              const viewState = leaf.getViewState();
-             // 白板和数据库通常不支持这种滚动锚点，所以这里保留 markdown 限制以防报错
+             // Canvas/base views generally don't support this kind of scroll anchor
              if (viewState.type === "markdown") {
                  window.setTimeout(() => scrollToElement(app, linktext, leaf), 20);
              }
@@ -129,7 +151,7 @@ function scrollToElement(app: App, linktext: string, leaf: WorkspaceLeaf) {
     const hashMatch = linktext.match(/(#|\^)(.*)$/);
     if (!hashMatch) return; 
 
-    // 使用 MarkdownView 断言以获取 editor
+    // Cast to MarkdownView to get at the editor
     const view = leaf.view as MarkdownView;
     if (!view || !view.editor) return;
     if (!view.file) return;
@@ -156,8 +178,8 @@ function scrollToElement(app: App, linktext: string, leaf: WorkspaceLeaf) {
     }
 }
 
-// 代理拦截函数 (Monkey Patching)
-// 返回一个清理函数，供 this.register 注册，确保在插件禁用时能够正确卸载钩子
+// Monkey-patching helper.
+// Returns a cleanup function for this.register(), so hooks unwind cleanly on unload.
 function around(obj: Record<string, unknown>, factories: Record<string, (original: AnyFunction) => AnyFunction>): () => void {
     const removers = Object.keys(factories).map((key) => {
         const prev = obj[key] as AnyFunction;
@@ -168,6 +190,6 @@ function around(obj: Record<string, unknown>, factories: Record<string, (origina
             if (obj[key] === next) obj[key] = original;
         };
     });
-    // Obsidian 的 this.register() 接收一个 function 作为参数
+    // this.register() expects a plain function
     return () => removers.forEach((r) => r());
 }

@@ -1,7 +1,7 @@
 node_modules/
 data.json
 .DS_Store
-.版本一/
-.版本二/
-.版本三/
-整体.ps1
+.claude/
+temp/
+main.js
+package-lock.json

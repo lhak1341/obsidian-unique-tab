@@ -11,12 +11,24 @@ import {
 
 type AnyFunction = (...args: unknown[]) => unknown;
 
+// Undocumented API surface. `View.file` exists on file-backed views but isn't declared on
+// the base class, and `WorkspaceLeaf.containerEl` isn't part of the public API at all.
+// Typed here and reached via `as unknown as` casts rather than @ts-ignore, which lint
+// blocks and which suppresses every error on its line, not just the intended one.
+interface UndocumentedView {
+    file?: TFile;
+}
+
+interface UndocumentedLeaf {
+    containerEl?: HTMLElement;
+}
+
 // Empirically-tuned delays — see call sites for why each is needed.
 const ACTIVATE_AFTER_OPEN_FILE_DELAY_MS = 10;
 const SCROLL_TO_ANCHOR_DELAY_MS = 20;
 
 export default class NoDuplicatePlugin extends Plugin {
-    async onload() {
+    onload() {
         // Both hooks below monkeypatch shared prototypes (Workspace.prototype,
         // WorkspaceLeaf.prototype) rather than per-instance methods, since Obsidian
         // exposes no event/hook for "about to open a file". If another installed
@@ -56,13 +68,12 @@ export default class NoDuplicatePlugin extends Plugin {
 
                         if (leafFound) {
                             // Check whether the current leaf is a newly created empty leaf
-                            // @ts-ignore: `file` isn't strongly typed on all View subclasses
-                            const isNewEmptyLeaf = this.view && !this.view.file && this.view.getViewType() === "empty";
+                            const view = this.view as unknown as UndocumentedView | undefined;
+                            const isNewEmptyLeaf = !!this.view && !view?.file && this.view.getViewType() === "empty";
 
                             if (isNewEmptyLeaf) {
                                 // Hide via CSS class instead of inline style
-                                // @ts-ignore: containerEl isn't part of the public API
-                                const containerEl = this.containerEl as HTMLElement;
+                                const { containerEl } = this as unknown as UndocumentedLeaf;
                                 if (containerEl) {
                                     containerEl.addClass('unique-tab-hidden');
                                 }
@@ -102,8 +113,7 @@ function activateLeafByPath(app: App, path: string, linktext: string | null = nu
         // until after this loop finishes — iterateAllLeaves walks the live split/tab
         // tree, and detaching mid-walk would splice a sibling out from under it,
         // risking a skipped leaf in the same tab group.
-        // @ts-ignore: containerEl isn't part of the public API
-        const leafContainerEl = leaf.containerEl as HTMLElement | undefined;
+        const leafContainerEl = (leaf as unknown as UndocumentedLeaf).containerEl;
         if (leaf.getViewState().type === "empty" && leafContainerEl?.hasClass('unique-tab-hidden')) {
             staleGhostLeaves.push(leaf);
             return;

@@ -12,6 +12,13 @@ export default defineConfig([
     },
   },
   {
+    files: ["scripts/**"],
+    rules: {
+      "obsidianmd/hardcoded-config-path": "off",
+      "obsidianmd/rule-custom-message": "off",
+    },
+  },
+  {
     ignores: ["main.js", "node_modules/**"],
   },
 ]);

@@ -1,7 +1,6 @@
 # obsidian-unique-tab
 
-House conventions for Obsidian plugin repos live in the `obsidian-plugin-dev` skill —
-including the `typescript` version pin that used to be the only note here.
+House conventions live in the `obsidian-plugin-dev` skill.
 
-Single-file plugin (`main.ts` at repo root). No bundler config: `build` calls the `esbuild`
-CLI directly with inline flags, and there is no `dev` watch script.
+Deviates from that skill's declared script contract: no `esbuild.config.mjs` (build uses
+inline esbuild flags in `package.json`), and no `dev` or `test` script.

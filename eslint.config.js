@@ -19,6 +19,15 @@ export default defineConfig([
     },
   },
   {
+    // Test fakes stand in for Obsidian objects: no real TFile to narrow with instanceof,
+    // and no popout window, so the plugin-code rules don't apply.
+    files: ["test-fakes.ts", "*.test.ts"],
+    rules: {
+      "obsidianmd/no-global-this": "off",
+      "obsidianmd/no-tfile-tfolder-cast": "off",
+    },
+  },
+  {
     ignores: ["main.js", "node_modules/**"],
   },
 ]);

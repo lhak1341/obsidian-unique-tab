@@ -1,32 +1,54 @@
-import type { App, TFile, WorkspaceLeaf } from "obsidian";
+import type { TFile } from "obsidian";
+import type { Tab, TabHost } from "./tab-host";
 
-// Hand-written stand-ins for the slice of Obsidian that redirect.ts and ghost-leaf.ts touch.
-// They encode our reading of Obsidian, not Obsidian itself: timing and focus behaviour is
-// verified in a live vault, not here.
+// The test adapter for TabHost. It encodes our reading of Obsidian, not Obsidian itself:
+// timing and focus behaviour is verified in a live vault, not here.
 
 export interface FakeLeaf {
     root: "main" | "side";
-    viewState: { type: string; state?: { file?: string } };
-    view?: { file?: unknown; getViewType(): string };
-    classes: Set<string>;
+    type: string;
+    file?: string;
+    viewFile?: unknown;
+    hidden: boolean;
     detached: boolean;
     ephemeral: unknown[];
-    containerEl: { addClass(c: string): void; hasClass(c: string): boolean };
-    getViewState(): FakeLeaf["viewState"];
-    getRoot(): unknown;
-    detach(): void;
-    setEphemeralState(state: unknown): void;
 }
 
 export function makeWorld() {
-    const mainRoot = { name: "rootSplit" };
-    const sideRoot = { name: "sidebar" };
     const leaves: FakeLeaf[] = [];
     const activated: FakeLeaf[] = [];
     const timers: { fn: () => void; ms: number }[] = [];
+    const files: Record<string, { path: string }> = {};
 
-    (globalThis as unknown as { window: unknown }).window = {
-        setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; },
+    const as = (t: Tab) => t as unknown as FakeLeaf;
+
+    const host: TabHost = {
+        // A snapshot, like the Obsidian adapter's: detaching while walking it is safe.
+        leaves: () => leaves.map((l) => l as unknown as Tab),
+        inMainArea: (t) => as(t).root === "main",
+        stateFile: (t) => as(t).file,
+        stateType: (t) => as(t).type,
+        viewType: (t) => as(t).type,
+        showsFile: (t) => !!as(t).viewFile,
+        isHidden: (t) => as(t).hidden,
+        hide: (t) => { as(t).hidden = true; },
+        detach: (t) => {
+            const leaf = as(t);
+            leaf.detached = true;
+            const i = leaves.indexOf(leaf);
+            if (i >= 0) leaves.splice(i, 1);
+        },
+        activate: (t, eState) => {
+            activated.push(as(t));
+            if (eState) as(t).ephemeral.push(eState);
+        },
+        resolveLink: (linktext) => {
+            const i = linktext.indexOf("#");
+            const path = i < 0 ? linktext : linktext.slice(0, i);
+            const subpath = i < 0 ? "" : linktext.slice(i);
+            return files[path] ? { path, subpath } : null;
+        },
+        later: (ms, fn) => { timers.push({ fn, ms }); },
     };
 
     function addLeaf(opts: {
@@ -36,63 +58,26 @@ export function makeWorld() {
         hidden?: boolean;
         viewFile?: unknown;
     } = {}): FakeLeaf {
-        const classes = new Set<string>(opts.hidden ? ["unique-tab-hidden"] : []);
-        const type = opts.type ?? "markdown";
         const leaf: FakeLeaf = {
             root: opts.root ?? "main",
-            viewState: { type, state: opts.file === undefined ? undefined : { file: opts.file } },
-            view: { file: opts.viewFile, getViewType: () => type },
-            classes,
+            type: opts.type ?? "markdown",
+            file: opts.file,
+            viewFile: opts.viewFile,
+            hidden: opts.hidden ?? false,
             detached: false,
             ephemeral: [],
-            containerEl: {
-                addClass: (c) => { classes.add(c); },
-                hasClass: (c) => classes.has(c),
-            },
-            getViewState: () => leaf.viewState,
-            getRoot: () => (leaf.root === "main" ? mainRoot : sideRoot),
-            detach: () => {
-                leaf.detached = true;
-                const i = leaves.indexOf(leaf);
-                if (i >= 0) leaves.splice(i, 1);
-            },
-            setEphemeralState: (state) => { leaf.ephemeral.push(state); },
         };
         leaves.push(leaf);
         return leaf;
     }
 
-    const files: Record<string, { path: string }> = {};
-
-    const app = {
-        workspace: {
-            rootSplit: mainRoot,
-            // Live walk, like Obsidian's: detaching mid-walk skips a sibling.
-            iterateAllLeaves(cb: (leaf: WorkspaceLeaf) => void) {
-                for (let i = 0; i < leaves.length; i++) cb(leaves[i] as unknown as WorkspaceLeaf);
-            },
-            setActiveLeaf(leaf: FakeLeaf) { activated.push(leaf); },
-        },
-        metadataCache: {
-            getFirstLinkpathDest: (linkpath: string) => files[linkpath] ?? null,
-        },
-    } as unknown as App;
-
     return {
-        app,
+        host,
         leaves,
         activated,
         timers,
         addLeaf,
         addFile(path: string) { files[path] = { path }; return files[path] as unknown as TFile; },
-        asLeaf: (l: FakeLeaf) => l as unknown as WorkspaceLeaf,
+        asTab: (l: FakeLeaf) => l as unknown as Tab,
     };
 }
-
-export const links = {
-    getLinkpath: (t: string) => t.split("#")[0],
-    parseLinktext: (t: string) => {
-        const i = t.indexOf("#");
-        return i < 0 ? { path: t, subpath: "" } : { path: t.slice(0, i), subpath: t.slice(i) };
-    },
-};

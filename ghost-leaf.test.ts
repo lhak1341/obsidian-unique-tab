@@ -6,8 +6,8 @@ describe("retire", () => {
     test("hides and detaches a new empty leaf", () => {
         const w = makeWorld();
         const leaf = w.addLeaf({ type: "empty" });
-        retire(w.asLeaf(leaf));
-        expect(leaf.classes.has("unique-tab-hidden")).toBe(true);
+        retire(w.host, w.asTab(leaf));
+        expect(leaf.hidden).toBe(true);
         expect(leaf.detached).toBe(true);
     });
 
@@ -15,10 +15,10 @@ describe("retire", () => {
         const w = makeWorld();
         const real = w.addLeaf({ type: "markdown", viewFile: { path: "a.md" } });
         const emptyWithFile = w.addLeaf({ type: "empty", viewFile: { path: "b.md" } });
-        retire(w.asLeaf(real));
-        retire(w.asLeaf(emptyWithFile));
+        retire(w.host, w.asTab(real));
+        retire(w.host, w.asTab(emptyWithFile));
         expect(real.detached).toBe(false);
-        expect(real.classes.size).toBe(0);
+        expect(real.hidden).toBe(false);
         expect(emptyWithFile.detached).toBe(false);
     });
 });
@@ -30,7 +30,7 @@ describe("sweep", () => {
         const ghostB = w.addLeaf({ type: "empty", hidden: true });
         const plainEmpty = w.addLeaf({ type: "empty" });
         const hiddenMarkdown = w.addLeaf({ type: "markdown", file: "a.md", hidden: true });
-        sweep(w.app);
+        sweep(w.host);
         expect(ghostA.detached).toBe(true);
         expect(ghostB.detached).toBe(true);
         expect(plainEmpty.detached).toBe(false);

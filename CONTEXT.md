@@ -9,7 +9,7 @@ A leaf in the main editor area that shows a file. Leaves in the sidebars are not
 _Avoid_: Pane, panel, window
 
 **Redirect**:
-Activating a file's existing tab in place of opening it a second time.
+Activating a file's existing tab in place of opening it a second time. It applies even to an explicit new-tab request (ctrl-click): Obsidian's follow-up open of the new leaf is redirected too, so a file never has two tabs.
 _Avoid_: Jump, focus, reuse
 
 **Tab redirect**:
@@ -31,3 +31,11 @@ _Avoid_: Fragment, hash
 **Ghost leaf**:
 An empty leaf that Obsidian created for an open intent that was then redirected. It is hidden and discarded.
 _Avoid_: Stale leaf, hidden tab, zombie
+
+**Open hook**:
+A patch on an Obsidian open method (`openLinkText`, `openFile`) that consults the tab redirect before the original runs.
+_Avoid_: Interceptor, monkeypatch
+
+**Tab host**:
+The seam through which the tab redirect and ghost leaf modules read and act on the workspace. Adapters: the Obsidian one in the plugin, a fake in tests.
+_Avoid_: Workspace wrapper, port

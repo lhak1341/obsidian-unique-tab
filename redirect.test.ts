@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { redirectLink, redirectOpen } from "./redirect";
-import { links, makeWorld } from "./test-fakes";
+import { makeWorld } from "./test-fakes";
 
 describe("tab matching", () => {
     test("a sidebar leaf mirroring the file is not a tab", () => {
@@ -8,7 +8,7 @@ describe("tab matching", () => {
         const file = w.addFile("a.md");
         w.addLeaf({ root: "side", file: "a.md" });
         const from = w.addLeaf({ type: "empty" });
-        expect(redirectOpen(w.app, file, w.asLeaf(from), undefined)).toBe(false);
+        expect(redirectOpen(w.host, file, w.asTab(from), undefined)).toBe(false);
         expect(w.activated).toHaveLength(0);
     });
 
@@ -16,7 +16,7 @@ describe("tab matching", () => {
         const w = makeWorld();
         const file = w.addFile("a.md");
         const from = w.addLeaf({ file: "a.md" });
-        expect(redirectOpen(w.app, file, w.asLeaf(from), undefined)).toBe(false);
+        expect(redirectOpen(w.host, file, w.asTab(from), undefined)).toBe(false);
         expect(w.activated).toHaveLength(0);
     });
 
@@ -26,7 +26,7 @@ describe("tab matching", () => {
         w.addLeaf({ file: "" });
         w.addLeaf({ file: undefined });
         const from = w.addLeaf({ type: "empty" });
-        expect(redirectOpen(w.app, file, w.asLeaf(from), undefined)).toBe(false);
+        expect(redirectOpen(w.host, file, w.asTab(from), undefined)).toBe(false);
     });
 
     test("no matching tab: returns false and touches nothing", () => {
@@ -34,17 +34,17 @@ describe("tab matching", () => {
         const file = w.addFile("a.md");
         w.addLeaf({ file: "other.md" });
         const from = w.addLeaf({ type: "empty" });
-        expect(redirectOpen(w.app, file, w.asLeaf(from), undefined)).toBe(false);
+        expect(redirectOpen(w.host, file, w.asTab(from), undefined)).toBe(false);
         expect(w.activated).toHaveLength(0);
         expect(w.timers).toHaveLength(0);
         expect(from.detached).toBe(false);
-        expect(from.classes.size).toBe(0);
+        expect(from.hidden).toBe(false);
     });
 
     test("an unresolvable link is not redirected", () => {
         const w = makeWorld();
         w.addLeaf({ file: "a.md" });
-        expect(redirectLink(w.app, links, "missing", "src.md", undefined)).toBe(false);
+        expect(redirectLink(w.host, "missing", "src.md", undefined)).toBe(false);
     });
 });
 
@@ -53,7 +53,7 @@ describe("activation timing", () => {
         const w = makeWorld();
         w.addFile("a");
         const tab = w.addLeaf({ file: "a" });
-        expect(redirectLink(w.app, links, "a", "src.md", undefined)).toBe(true);
+        expect(redirectLink(w.host, "a", "src.md", undefined)).toBe(true);
         expect(w.activated).toEqual([tab]);
         expect(w.timers).toHaveLength(0);
     });
@@ -63,7 +63,7 @@ describe("activation timing", () => {
         const file = w.addFile("a.md");
         const tab = w.addLeaf({ file: "a.md" });
         const from = w.addLeaf({ type: "empty" });
-        expect(redirectOpen(w.app, file, w.asLeaf(from), undefined)).toBe(true);
+        expect(redirectOpen(w.host, file, w.asTab(from), undefined)).toBe(true);
         expect(w.activated).toHaveLength(0);
         expect(w.timers.map((t) => t.ms)).toEqual([10]);
         w.timers[0].fn();
@@ -77,7 +77,7 @@ describe("open state", () => {
         const w = makeWorld();
         w.addFile("a");
         const tab = w.addLeaf({ file: "a", type: "markdown" });
-        redirectLink(w.app, links, "a#Heading", "src.md", undefined);
+        redirectLink(w.host, "a#Heading", "src.md", undefined);
         expect(tab.ephemeral).toEqual([{ subpath: "#Heading" }]);
     });
 
@@ -85,7 +85,7 @@ describe("open state", () => {
         const w = makeWorld();
         w.addFile("a");
         const tab = w.addLeaf({ file: "a", type: "canvas" });
-        redirectLink(w.app, links, "a#Heading", "src.md", undefined);
+        redirectLink(w.host, "a#Heading", "src.md", undefined);
         expect(tab.ephemeral).toEqual([]);
     });
 
@@ -93,7 +93,7 @@ describe("open state", () => {
         const w = makeWorld();
         w.addFile("a");
         const tab = w.addLeaf({ file: "a", type: "markdown" });
-        redirectLink(w.app, links, "a#Heading", "src.md", { eState: { line: 7 } });
+        redirectLink(w.host, "a#Heading", "src.md", { eState: { line: 7 } });
         expect(tab.ephemeral).toEqual([{ line: 7 }]);
     });
 
@@ -101,7 +101,7 @@ describe("open state", () => {
         const w = makeWorld();
         w.addFile("a");
         const tab = w.addLeaf({ file: "a" });
-        redirectLink(w.app, links, "a", "src.md", undefined);
+        redirectLink(w.host, "a", "src.md", undefined);
         expect(tab.ephemeral).toEqual([]);
     });
 });
@@ -113,7 +113,7 @@ describe("ghost handling inside a redirect", () => {
         const ghost = w.addLeaf({ type: "empty", hidden: true });
         w.addLeaf({ file: "a.md" });
         const from = w.addLeaf({ type: "empty" });
-        redirectOpen(w.app, file, w.asLeaf(from), undefined);
+        redirectOpen(w.host, file, w.asTab(from), undefined);
         expect(ghost.detached).toBe(true);
     });
 });
